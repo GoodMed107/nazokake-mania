@@ -56,8 +56,10 @@ async def _call_gemini(system_text, user_text, schema):
     }
     try:
         timeout = aiohttp.ClientTimeout(total=30)
+        # APIキーはヘッダーで渡す。新形式(AQ.)/旧形式(AIza)どちらもこれでOK。
+        headers = {"x-goog-api-key": key}
         async with aiohttp.ClientSession(timeout=timeout) as s:
-            async with s.post(url, params={"key": key}, json=body) as r:
+            async with s.post(url, headers=headers, json=body) as r:
                 if r.status != 200:
                     txt = await r.text()
                     print(f"[ai] Gemini HTTP {r.status}: {txt[:200]}")
