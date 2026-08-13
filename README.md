@@ -37,7 +37,7 @@ python server.py
 ## 設定（任意・`.env` で変更）
 | 変数 | 既定 | 意味 |
 |---|---|---|
-| `NAZOKAKE_MODEL` | `gemini-2.0-flash` | AIのモデル（Gemini）。無料枠・高速 |
+| `NAZOKAKE_MODEL` | `gemini-2.5-flash` | AIのモデル（Gemini）。無料枠・高速 |
 | `NAZOKAKE_ROUNDS` | `5` | 席数（ラウンド数） |
 | `NAZOKAKE_THINK` | `90` | シンキングタイム（秒） |
 | `NAZOKAKE_VOTE` | `45` | 投票時間（秒） |

@@ -12,6 +12,6 @@ services:
         sync: false
       - key: PYTHON_VERSION
         value: "3.13.4"
-      # 使うモデル。gemini-2.0-flash は無料枠・高速
+      # 使うモデル。gemini-2.5-flash は無料枠・高速（gemini-2.0-flash は提供終了）
       - key: NAZOKAKE_MODEL
-        value: gemini-2.0-flash
+        value: gemini-2.5-flash

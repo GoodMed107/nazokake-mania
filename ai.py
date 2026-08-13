@@ -16,7 +16,7 @@ import random
 
 import aiohttp
 
-MODEL = os.environ.get("NAZOKAKE_MODEL", "gemini-2.0-flash")
+MODEL = os.environ.get("NAZOKAKE_MODEL", "gemini-2.5-flash")
 
 # AIキャラの性格（口調・作風）。server 側の AI_NAMES と対応。
 PERSONAS = {
