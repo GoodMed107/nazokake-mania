@@ -21,6 +21,22 @@ import aiohttp
 MODEL = os.environ.get("NAZOKAKE_MODEL", "gemini-3.6-flash")
 _resolved_model = None  # 実際に使うモデル（起動後に自動決定してキャッシュ）
 
+# --- スタッガー: 呼び出し開始の最小間隔を空けて 429 を避ける（サーバー全体で共有）---
+_STAGGER = float(os.environ.get("NAZOKAKE_STAGGER", "0.7"))  # 秒
+_rate_lock = asyncio.Lock()
+_last_call = 0.0
+
+
+async def _rate_gate():
+    """直前の呼び出しから _STAGGER 秒あくまで待つ。開始時刻を記録したら即解放。"""
+    global _last_call
+    async with _rate_lock:
+        loop = asyncio.get_running_loop()
+        wait = _last_call + _STAGGER - loop.time()
+        if wait > 0:
+            await asyncio.sleep(wait)
+        _last_call = loop.time()
+
 # AIキャラの性格（口調・作風）。server 側の AI_NAMES と対応。
 PERSONAS = {
     "蒼太": "王道で分かりやすい、少し真面目な作風。同音のダジャレを素直に決める。",
@@ -83,6 +99,7 @@ async def _call_gemini(system_text, user_text, schema):
     key = _api_key()
     if not key:
         return None
+    await _rate_gate()  # 呼び出しをずらして 429 を避ける
     body = {
         "systemInstruction": {"parts": [{"text": system_text}]},
         "contents": [{"role": "user", "parts": [{"text": user_text}]}],
