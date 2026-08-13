@@ -13,6 +13,7 @@ aiohttp で REST を直接叩くので、追加ライブラリは不要。
 import os
 import json
 import random
+import asyncio
 
 import aiohttp
 
@@ -99,17 +100,22 @@ async def _call_gemini(system_text, user_text, schema):
             model = await _resolve_model(s, key)
             url = (f"https://generativelanguage.googleapis.com/v1beta/models/"
                    f"{model}:generateContent")
-            async with s.post(url, headers=headers, json=body) as r:
-                if r.status != 200:
+            # レート上限(429)や一時的なサーバーエラーは少し待って再試行
+            for attempt in range(3):
+                async with s.post(url, headers=headers, json=body) as r:
+                    if r.status == 200:
+                        data = await r.json()
+                        text = data["candidates"][0]["content"]["parts"][0]["text"]
+                        return json.loads(text)
                     txt = await r.text()
-                    print(f"[ai] Gemini HTTP {r.status}: {txt[:200]}")
-                    # モデルが見つからない場合は次回モデルを選び直す
+                    if r.status in (429, 500, 503) and attempt < 2:
+                        await asyncio.sleep(1.2 * (attempt + 1) + random.random())
+                        continue
+                    print(f"[ai] Gemini HTTP {r.status}: {txt[:160]}")
                     if r.status == 404:
                         globals()["_resolved_model"] = None
                     return None
-                data = await r.json()
-        text = data["candidates"][0]["content"]["parts"][0]["text"]
-        return json.loads(text)
+        return None
     except Exception as e:
         print(f"[ai] Gemini 呼び出し失敗: {e}")
         return None
