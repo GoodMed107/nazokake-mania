@@ -7,11 +7,11 @@ services:
     buildCommand: pip install -r requirements.txt
     startCommand: python server.py
     envVars:
-      # APIキーは Render のダッシュボードで手入力（ここには書かない＝GitHubに載らない）
-      - key: ANTHROPIC_API_KEY
+      # Gemini のAPIキーは Render のダッシュボードで手入力（ここには書かない＝GitHubに載らない）
+      - key: GEMINI_API_KEY
         sync: false
       - key: PYTHON_VERSION
         value: "3.13.4"
-      # 速度・コスト重視なら claude-haiku-4-5 に変えると軽い
+      # 使うモデル。gemini-2.0-flash は無料枠・高速
       - key: NAZOKAKE_MODEL
-        value: claude-opus-5
+        value: gemini-2.0-flash

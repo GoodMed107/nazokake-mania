@@ -5,7 +5,8 @@
 
 ## 必要なもの
 - Python 3.10 以上（確認：`python --version`）
-- Anthropic の APIキー（AI対戦相手を本物にするため）
+- Google Gemini の APIキー（AI対戦相手を本物にするため／無料枠あり）
+  - 発行: https://aistudio.google.com/apikey
 
 ## セットアップ（初回だけ）
 
@@ -14,7 +15,7 @@
    pip install -r requirements.txt
    ```
 2. APIキーを設定
-   - `.env.example` を `.env` にコピーして、`ANTHROPIC_API_KEY` に自分のキーを入れる。
+   - `.env.example` を `.env` にコピーして、`GEMINI_API_KEY` に自分のキーを入れる。
    - `.env` は**他人に渡さない**でください（キーが漏れます）。
 
 ## 起動
@@ -36,17 +37,17 @@ python server.py
 ## 設定（任意・`.env` で変更）
 | 変数 | 既定 | 意味 |
 |---|---|---|
-| `NAZOKAKE_MODEL` | `claude-opus-5` | AIのモデル。速度・コスト重視なら `claude-haiku-4-5` / `claude-sonnet-5` |
+| `NAZOKAKE_MODEL` | `gemini-2.0-flash` | AIのモデル（Gemini）。無料枠・高速 |
 | `NAZOKAKE_ROUNDS` | `5` | 席数（ラウンド数） |
 | `NAZOKAKE_THINK` | `90` | シンキングタイム（秒） |
 | `NAZOKAKE_VOTE` | `45` | 投票時間（秒） |
 | `PORT` | `8080` | ポート番号 |
 
 ## キーが無いとき
-`ANTHROPIC_API_KEY` を設定しなくても起動はできますが、AIの解答は
+`GEMINI_API_KEY` を設定しなくても起動はできますが、AIの解答は
 簡易的なダミーになります（進行の動作確認用）。
 
-## 次のステップ（フェーズ2：公開）
-Render / Railway などにデプロイすると、`https://～` のURLで
-世界中の友達が参加できるようになります。APIキーはホスティングの
-環境変数に入れるので、友達には見えません。
+## 公開（Render）
+Render にデプロイすると、`https://～` のURLで友達が参加できます。
+APIキーは Render の環境変数（`GEMINI_API_KEY`）に入れるので、友達には見えません。
+公開後でも Environment タブでいつでもキーを追加・変更できます。
