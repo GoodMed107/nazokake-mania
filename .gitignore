@@ -1,0 +1,11 @@
+# APIキーは絶対にコミットしない
+.env
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# ログ
+*.log
