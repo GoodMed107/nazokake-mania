@@ -16,7 +16,15 @@ import random
 
 import aiohttp
 
-MODEL = os.environ.get("NAZOKAKE_MODEL", "gemini-2.5-flash")
+_DEFAULT_MODEL = "gemini-2.5-flash"
+# 提供終了した古いモデルが指定されていたら、自動で現行モデルに切替（安全弁）
+_RETIRED = {"gemini-2.0-flash", "gemini-2.0-flash-lite", "gemini-2.0-flash-001",
+            "gemini-1.5-flash", "gemini-1.5-flash-latest", "gemini-1.5-pro",
+            "gemini-pro", "gemini-1.0-pro"}
+MODEL = os.environ.get("NAZOKAKE_MODEL", _DEFAULT_MODEL)
+if MODEL in _RETIRED:
+    print(f"[ai] モデル {MODEL} は提供終了のため {_DEFAULT_MODEL} に切替")
+    MODEL = _DEFAULT_MODEL
 
 # AIキャラの性格（口調・作風）。server 側の AI_NAMES と対応。
 PERSONAS = {
