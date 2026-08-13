@@ -89,6 +89,7 @@ class Room:
         self.host_id = None
         self.state = "lobby"   # lobby / playing
         self.game_task = None
+        self.ai_batch_task = None  # ゲーム開始時に全AI解答をまとめて生成するタスク
         # per-round working state
         self.round_index = 0
         self.odai_list = []
@@ -179,6 +180,12 @@ class Room:
                 p.score = 0
             self.state = "playing"
             self.odai_list = odai.random_odai(TOTAL_ROUNDS)
+            # 全お題×全AIのなぞかけを1回でまとめて生成（開始と同時に裏で実行）。
+            # 各席のシンキングタイム中に生成が終わるので待ち時間は目立たない。
+            ai_names = [p.name for p in self.ordered() if p.is_ai]
+            self.ai_batch_task = (
+                asyncio.create_task(ai.generate_nazokake_batch(self.odai_list, ai_names))
+                if ai_names else None)
             for r in range(TOTAL_ROUNDS):
                 self.round_index = r
                 await self.play_round(r)
@@ -208,10 +215,6 @@ class Room:
             "odai": current_odai, "seconds": THINK_SECONDS,
         })
 
-        # AI生成を並行開始
-        ai_tasks = {p.id: asyncio.create_task(ai.generate_nazokake(current_odai, p.name))
-                    for p in self.ordered() if p.is_ai}
-
         # 人間の提出待ち（全員提出で早期終了）or タイムアウト
         self._check_submit_done()
         try:
@@ -220,14 +223,19 @@ class Room:
         except asyncio.TimeoutError:
             pass
 
-        # AIの提出を確定（人間が早く終わってもAI生成は待つ）
-        for pid, t in ai_tasks.items():
+        # AIの解答は「ゲーム開始時に1回でまとめて生成したバッチ」から取得
+        batch = {}
+        if self.ai_batch_task is not None:
             try:
-                res = await t
+                batch = await self.ai_batch_task
             except Exception:
-                res = None
-            if res and pid in self.players:
-                self.submissions[pid] = {"b": res["b"], "c": res["c"]}
+                batch = {}
+        for p in self.ordered():
+            if p.is_ai:
+                ans = batch.get(r, {}).get(p.name)
+                if not ans:
+                    ans = ai._fallback_generate(current_odai)
+                self.submissions[p.id] = {"b": ans["b"], "c": ans["c"]}
 
         # --- フェーズ4前半: 発表 & 投票 ---
         answers = [p for p in self.ordered() if p.id in self.submissions]
@@ -257,17 +265,14 @@ class Room:
         except asyncio.TimeoutError:
             pass
 
-        # 成立チェック（参考表示）を並行実行
-        check_tasks = {p.id: asyncio.create_task(
-            ai.check_nazokake(current_odai, self.submissions[p.id]["b"],
-                              self.submissions[p.id]["c"]))
-            for p in answers}
-        verdicts = {}
-        for pid, t in check_tasks.items():
-            try:
-                verdicts[pid] = await t
-            except Exception:
-                verdicts[pid] = {"verdict": "good", "reason": ""}
+        # 成立チェック（参考表示）を1回でまとめて実行（無料枠の節約）
+        try:
+            verdicts = await ai.check_nazokake_batch(
+                current_odai,
+                [{"id": p.id, "b": self.submissions[p.id]["b"],
+                  "c": self.submissions[p.id]["c"]} for p in answers])
+        except Exception:
+            verdicts = {p.id: {"verdict": "good", "reason": ""} for p in answers}
 
         # AIの投票（自分以外・重み付き）
         for p in self.ordered():

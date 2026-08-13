@@ -94,20 +94,23 @@ async def _resolve_model(session, key):
     return _resolved_model
 
 
-async def _call_gemini(system_text, user_text, schema):
+async def _call_gemini(system_text, user_text, schema, max_tokens=None):
     """Gemini generateContent を呼び、JSON(dict)を返す。失敗時 None。"""
     key = _api_key()
     if not key:
         return None
     await _rate_gate()  # 呼び出しをずらして 429 を避ける
+    gen_config = {
+        "responseMimeType": "application/json",
+        "responseSchema": schema,
+        "temperature": 1.0,
+    }
+    if max_tokens:
+        gen_config["maxOutputTokens"] = max_tokens
     body = {
         "systemInstruction": {"parts": [{"text": system_text}]},
         "contents": [{"role": "user", "parts": [{"text": user_text}]}],
-        "generationConfig": {
-            "responseMimeType": "application/json",
-            "responseSchema": schema,
-            "temperature": 1.0,
-        },
+        "generationConfig": gen_config,
     }
     try:
         timeout = aiohttp.ClientTimeout(total=30)
@@ -203,6 +206,129 @@ async def check_nazokake(odai, b, c):
     if v not in ("good", "warn", "bad"):
         v = "good"
     return {"verdict": v, "reason": str(data.get("reason", "")).strip()}
+
+
+# ---------- バッチ生成（全お題×全AIを1回で） ----------
+
+_BATCH_GEN_SCHEMA = {
+    "type": "OBJECT",
+    "properties": {
+        "rounds": {
+            "type": "ARRAY",
+            "items": {
+                "type": "OBJECT",
+                "properties": {
+                    "answers": {
+                        "type": "ARRAY",
+                        "items": {
+                            "type": "OBJECT",
+                            "properties": {
+                                "name": {"type": "STRING"},
+                                "b": {"type": "STRING"},
+                                "c": {"type": "STRING"},
+                            },
+                            "required": ["name", "b", "c"],
+                        },
+                    },
+                },
+                "required": ["answers"],
+            },
+        },
+    },
+    "required": ["rounds"],
+}
+
+
+async def generate_nazokake_batch(odai_list, personas):
+    """全お題×全AIのなぞかけを1回のAPI呼び出しで生成。
+
+    戻り値: {round_index: {persona_name: {"b","c"}}}。
+    失敗・欠けはダミーで必ず埋めるので、呼び出し側は常に全スロット揃う。
+    """
+    result = {i: {} for i in range(len(odai_list))}
+
+    def fill_dummy():
+        for i, o in enumerate(odai_list):
+            for name in personas:
+                result[i].setdefault(name, _fallback_generate(o))
+        return result
+
+    if not personas:
+        return result
+    persona_lines = "\n".join(f"- {n}: {PERSONAS.get(n, '軽妙な作風')}" for n in personas)
+    odai_lines = "\n".join(f"{i + 1}. {o}" for i, o in enumerate(odai_list))
+    system = (
+        "あなたは日本語のなぞかけ（掛け言葉）の名手です。"
+        "複数のお題それぞれに対して、指定した作者ごとに"
+        "『AとかけてBと解く、その心はC』を作ります。"
+        "Bは掛ける対象（短い名詞句）、Cは『どちらも〜』でAとBを同音か二重の意味で"
+        "つなぐ落ち。短くキレよく。各作者の作風を反映すること。"
+    )
+    user = (f"お題一覧:\n{odai_lines}\n\n作者と作風:\n{persona_lines}\n\n"
+            f"各お題について、{'、'.join(personas)} の順で1句ずつ。"
+            f"rounds はお題の順、その中の answers は作者の順で返す。")
+    data = await _call_gemini(system, user, _BATCH_GEN_SCHEMA, max_tokens=4096)
+    if not data:
+        return fill_dummy()
+    rounds = data.get("rounds", [])
+    for i in range(len(odai_list)):
+        answers = rounds[i].get("answers", []) if i < len(rounds) else []
+        by_name = {a.get("name"): a for a in answers if a.get("name")}
+        for j, name in enumerate(personas):
+            a = by_name.get(name) or (answers[j] if j < len(answers) else None)
+            b = str(a.get("b", "")).strip() if a else ""
+            c = str(a.get("c", "")).strip() if a else ""
+            result[i][name] = {"b": b, "c": c} if (b and c) else _fallback_generate(odai_list[i])
+    return result
+
+
+# ---------- バッチ判定（各席の全解答を1回で） ----------
+
+_BATCH_CHECK_SCHEMA = {
+    "type": "OBJECT",
+    "properties": {
+        "results": {
+            "type": "ARRAY",
+            "items": {
+                "type": "OBJECT",
+                "properties": {
+                    "id": {"type": "STRING"},
+                    "verdict": {"type": "STRING"},
+                    "reason": {"type": "STRING"},
+                },
+                "required": ["id", "verdict", "reason"],
+            },
+        },
+    },
+    "required": ["results"],
+}
+
+
+async def check_nazokake_batch(odai, answers):
+    """answers: [{"id","b","c"}] を1回でまとめて判定。戻り: {id: {"verdict","reason"}}"""
+    out = {a["id"]: {"verdict": "good", "reason": ""} for a in answers}
+    if not answers:
+        return out
+    lines = "\n".join(f'- id={a["id"]}: B「{a["b"]}」 C「{a["c"]}」' for a in answers)
+    system = (
+        "あなたはなぞかけの審査員です。各解答について"
+        "『AとかけてBと解く、その心はC』が、同音（ダジャレ）または二重の意味で"
+        "AとBをつないでいるか判定します。笑える強引さは許容し、"
+        "まったく無関係なときだけ bad。"
+        " verdict は good（成立）/warn（やや強引）/bad（不成立）、reason は10〜25字。"
+    )
+    user = f"お題A=「{odai}」。次の各解答を id ごとに判定:\n{lines}"
+    data = await _call_gemini(system, user, _BATCH_CHECK_SCHEMA, max_tokens=2048)
+    if not data:
+        return out
+    for r in data.get("results", []):
+        rid = r.get("id")
+        if rid in out:
+            v = r.get("verdict", "good")
+            if v not in ("good", "warn", "bad"):
+                v = "good"
+            out[rid] = {"verdict": v, "reason": str(r.get("reason", "")).strip()}
+    return out
 
 
 # ---------- フォールバック（キー無し時のダミー） ----------
