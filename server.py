@@ -501,6 +501,11 @@ def make_app():
 
 
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", "8080"))
-    print(f"なぞかけマニア！ サーバー起動 → http://localhost:{port}")
+    raw_port = os.environ.get("PORT") or "8080"
+    try:
+        port = int(str(raw_port).strip())
+    except ValueError:
+        port = 8080
+    print(f"なぞかけマニア！ サーバー起動 (PORT={raw_port} → bind 0.0.0.0:{port})",
+          flush=True)
     web.run_app(make_app(), host="0.0.0.0", port=port)
