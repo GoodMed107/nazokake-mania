@@ -16,15 +16,9 @@ import random
 
 import aiohttp
 
-_DEFAULT_MODEL = "gemini-2.5-flash"
-# 提供終了した古いモデルが指定されていたら、自動で現行モデルに切替（安全弁）
-_RETIRED = {"gemini-2.0-flash", "gemini-2.0-flash-lite", "gemini-2.0-flash-001",
-            "gemini-1.5-flash", "gemini-1.5-flash-latest", "gemini-1.5-pro",
-            "gemini-pro", "gemini-1.0-pro"}
-MODEL = os.environ.get("NAZOKAKE_MODEL", _DEFAULT_MODEL)
-if MODEL in _RETIRED:
-    print(f"[ai] モデル {MODEL} は提供終了のため {_DEFAULT_MODEL} に切替")
-    MODEL = _DEFAULT_MODEL
+# 第一候補モデル。使えない場合は、キーで使えるモデルから自動選択する。
+MODEL = os.environ.get("NAZOKAKE_MODEL", "gemini-3.6-flash")
+_resolved_model = None  # 実際に使うモデル（起動後に自動決定してキャッシュ）
 
 # AIキャラの性格（口調・作風）。server 側の AI_NAMES と対応。
 PERSONAS = {
@@ -46,13 +40,48 @@ def _api_key():
     return key
 
 
+async def _resolve_model(session, key):
+    """このキーで実際に使えるモデルを決める（1回だけ問い合わせてキャッシュ）。
+
+    第一候補 MODEL が使えればそれを、ダメなら generateContent 対応の
+    flash 系モデルを自動選択する。Google 側のモデル入れ替えに追随できる。
+    """
+    global _resolved_model
+    if _resolved_model:
+        return _resolved_model
+    chosen = MODEL
+    try:
+        async with session.get(
+                "https://generativelanguage.googleapis.com/v1beta/models",
+                headers={"x-goog-api-key": key}) as r:
+            data = await r.json()
+        avail = [m.get("name", "").split("/")[-1] for m in data.get("models", [])
+                 if "generateContent" in (m.get("supportedGenerationMethods") or [])]
+        if MODEL and MODEL in avail:
+            chosen = MODEL
+        elif avail:
+            def score(n):
+                s = 0
+                if "flash" in n:
+                    s += 10
+                if "preview" in n or "-exp" in n or "experimental" in n:
+                    s -= 6
+                if "lite" in n:
+                    s -= 1  # フルflashを軽く優先（liteでも可）
+                return s
+            chosen = sorted(avail, key=score, reverse=True)[0]
+        print(f"[ai] 使用モデル: {chosen}  （利用可能 {len(avail)} 件）")
+    except Exception as e:
+        print(f"[ai] モデル自動選択に失敗（{e}）→ {MODEL} を使用")
+    _resolved_model = chosen or MODEL
+    return _resolved_model
+
+
 async def _call_gemini(system_text, user_text, schema):
     """Gemini generateContent を呼び、JSON(dict)を返す。失敗時 None。"""
     key = _api_key()
     if not key:
         return None
-    url = (f"https://generativelanguage.googleapis.com/v1beta/models/"
-           f"{MODEL}:generateContent")
     body = {
         "systemInstruction": {"parts": [{"text": system_text}]},
         "contents": [{"role": "user", "parts": [{"text": user_text}]}],
@@ -67,10 +96,16 @@ async def _call_gemini(system_text, user_text, schema):
         # APIキーはヘッダーで渡す。新形式(AQ.)/旧形式(AIza)どちらもこれでOK。
         headers = {"x-goog-api-key": key}
         async with aiohttp.ClientSession(timeout=timeout) as s:
+            model = await _resolve_model(s, key)
+            url = (f"https://generativelanguage.googleapis.com/v1beta/models/"
+                   f"{model}:generateContent")
             async with s.post(url, headers=headers, json=body) as r:
                 if r.status != 200:
                     txt = await r.text()
                     print(f"[ai] Gemini HTTP {r.status}: {txt[:200]}")
+                    # モデルが見つからない場合は次回モデルを選び直す
+                    if r.status == 404:
+                        globals()["_resolved_model"] = None
                     return None
                 data = await r.json()
         text = data["candidates"][0]["content"]["parts"][0]["text"]
